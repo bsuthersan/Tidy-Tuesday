@@ -1,0 +1,28 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r, include=FALSE}
+library(knitr)
+library(tidyverse)
+library(tidytuesdayR)
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r}
+library(skimr)
+mydata <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-07-19/technology.csv')
+skim(mydata) -> summary
+```
+
+Start by looking at the labels.
+
+```{r}
+mydata %>%
+  count(category)
+```
+
+
