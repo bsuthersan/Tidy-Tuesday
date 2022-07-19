@@ -1,0 +1,180 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, echo=false, warning=false}
+library(tidyverse)
+library(tidytuesdayR)
+library(skimr)
+library(data)
+mydata <- tt_load(2022, week = 3)
+mydata <- mydata$chocolate
+```
+
+```{r}
+#Get to know the data
+summary <- skim(mydata)
+```
+
+Skimr shows that the data looks good, it is only 
+
+Okay, let's look at ratings.
+
+```{r}
+mydata %>%
+  ggplot(aes(rating)) +
+  geom_histogram()
+```
+Majority of ratings sitting between a 3 and a 4. Mean is `r round(mean(mydata$rating),1)`. 
+
+Does location affect ratings?
+
+```{r}
+mydata %>%
+  group_by(company_location) %>%
+  summarise(mean = mean(rating)) %>%
+  arrange(desc(mean)) -> country_data
+```
+
+Looks like there may be regional variations, lets see.
+
+```{r}
+map_data("world") %>% 
+  filter(region != "Antarctica") %>% 
+  left_join(country_data, by = c('region' = 'company_location')) %>%
+  filter(!is.na(mean)) %>%
+  ggplot() +
+  geom_polygon(aes(long, lat, group = group, fill = mean)) +
+  coord_quickmap() +
+  scale_fill_viridis_c(option = "plasma", na.value = NA) +
+  theme_void()
+```
+
+Now breaking down the data by region, let's see if there is a regional difference that might be significant?
+
+```{r}
+library(countrycode)
+library(broom)
+mydata %>%
+  mutate(region = countrycode(source = mydata$company_location, origin = 'country.name',destination = 'region')) -> mydata
+
+mydata %>%
+  group_by(region) %>%
+  do(tidy(t.test(.$rating))) %>%
+  filter(parameter>=20,
+         !is.na(region)) %>%
+  ggplot(aes(estimate, reorder(region, estimate))) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = conf.low,
+                     xmax = conf.high)) +
+  xlim(2,4)
+```
+
+Okay seems to be some slight regional differences. Let's see what other things might be related, maybe coco content.
+
+```{r}
+mydata %>%
+  mutate(cocoa_percent = parse_number(cocoa_percent)) %>%
+  ggplot(aes(cocoa_percent, rating)) +
+  geom_point()
+```
+
+No relationship with cocoa_percent. What about country of bean origin?
+
+```{r}
+mydata %>% 
+  group_by(country_of_bean_origin) %>%
+  summarise(mean = mean(rating),
+            total = n()) %>%
+  arrange(desc(mean))
+```
+
+Okay no real relationships found there either. So now turning to the review date.
+
+```{r}
+mydata %>%
+  ggplot(aes(as.factor(review_date), rating)) +
+  geom_jitter(aes(colour = as.factor(review_date), alpha = 0.2)) +
+  geom_boxplot(alpha=0.2) +
+  theme_minimal() +
+  theme(legend.position = 'none') +
+  labs(x = "", 
+       y = 'Chocolate rating')
+```
+
+Okay, let's turn to the ratings data now.
+
+```{r}
+library(tidytext)
+library(stringr)
+word_data <-
+  mydata %>%
+  unnest_tokens(word, most_memorable_characteristics, drop=FALSE, token = 'regex', pattern = ',') %>%
+  mutate(word = str_squish(word))
+
+word_data %>%
+  group_by(word) %>%
+  summarise(mean = mean(rating),
+            count = n()) %>%
+  filter(count>=5) %>%
+  top_n(20)
+  
+```
+
+Okay, time to build our model. Will use a simple regression model to start with.
+
+```{r}
+library(tidymodels)
+library(textrecipes)
+set.seed(160287)
+
+data_split <-
+  initial_split(word_data)
+
+data_train <- training(data_split)
+data_test <- testing(data_split)
+
+##Build the recepie + workflow
+
+data_rec <- 
+  recipe(rating ~ word, data = data_train) %>%
+  step_tokenize(word) %>%
+  step_tokenfilter(word) %>%
+  step_tfidf(word) %>%
+  step_normalize(all_predictors())
+
+data_wf <- workflow() %>%
+  add_recipe(data_rec)
+
+##Model: Support vector machine
+
+svm_spec <- svm_linear() %>%
+  set_mode("regression") %>%
+  set_engine("LiblineaR")
+
+##Run the model
+
+svm_fit <- data_wf %>%
+  add_model(svm_spec) %>%
+  fit(data = data_train)
+
+
+```
+
+
+```{r, echo=false}
+##Visualise
+svm_fit %>%
+  extract_fit_parsnip() %>%
+  tidy() %>%
+  arrange(estimate) %>%
+  filter(term!='Bias') %>%
+  top_n(20) %>%
+  mutate(term = stringr::str_remove(term, 'tfidf_word_')) %>%
+  ggplot(aes(reorder(term,estimate), estimate)) +
+  geom_col(aes(fill = estimate)) +
+  coord_flip() +
+  labs(x = "", y = 'Estimate')
+```
+
