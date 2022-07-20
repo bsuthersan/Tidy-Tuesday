@@ -18,11 +18,16 @@ mydata <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tid
 skim(mydata) -> summary
 ```
 
-Start by looking at the labels.
+Start by looking at the categories over time.
 
 ```{r}
 mydata %>%
-  count(category)
+  filter(year>=2000) %>%
+  ggplot(aes(year, value)) +
+  geom_col(aes(fill=group)) +
+  facet_wrap(~category, scales = 'free_y') +
+  scale_fill_viridis_d() +
+  theme_minimal()
 ```
 
 
